@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 #pragma warning disable 649
 
 namespace _2Captcha
-{
+{ 
     public class _2Captcha
     {
 #if NETSTANDARD2_0
@@ -20,7 +20,6 @@ namespace _2Captcha
             public string Request;
         }
 
-        private string _apiUrl = "https://2captcha.com/";
 
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
@@ -30,17 +29,29 @@ namespace _2Captcha
             _httpClient = httpClient ?? new HttpClient();
             _apiKey = apiKey;
         }
-
-        public void SetApiUrl(string url)
+         
+        private string _apiUrl = "https://2captcha.com/";
+        public string ApiUrl
         {
-            if (!url.EndsWith("/"))
+            get
             {
-                 _apiUrl = url + "/";
-                 return;
+                return _apiUrl;
             }
+            set
+            {
+                if (value is null)
+                    return;
 
-            _apiUrl = url;
+                if (!value.EndsWith("/"))
+                {
+                    _apiUrl = value + "/";
+                    return;
+                }
+
+                _apiUrl = value;
+            }
         }
+         
 
         public async Task<_2CaptchaResult> GetBalance()
         {
