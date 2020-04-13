@@ -8,19 +8,19 @@ using System.Threading.Tasks;
 #pragma warning disable 649
 
 namespace _2Captcha
-{ 
-    public class _2Captcha
-    {
+{
 #if NETSTANDARD2_0
         [Serializable]
 #endif
-        private struct _2CaptchaResultInternal
-        {
-            public int Status;
-            public string Request;
-        }
+    internal struct _2CaptchaResultInternal
+    {
+        public bool Status;
+        public string Request;
+    }
+     
 
-
+    public class _2Captcha
+    {
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
 
@@ -30,87 +30,68 @@ namespace _2Captcha
             _apiKey = apiKey;
         }
          
-        private string _apiUrl = "https://2captcha.com/";
-        public string ApiUrl
+        private const string API_URL = "https://2captcha.com";
+        private const string RES_API_URL = API_URL + "/res.php";
+        private const string IN_API_URL = API_URL + "/in.php";
+          
+        public async Task<_2CaptchaResult> Report(string solveId, bool isBad = false)
         {
-            get
+            var getData = new Dictionary<string, string>
             {
-                return _apiUrl;
-            }
-            set
-            {
-                if (value is null)
-                    return;
+                { "key", _apiKey },
+                { "action", isBad ? "reportbad" : "reportgood" },
+                { "id", solveId },
+                { "json", "1"}
+            };
 
-                if (!value.EndsWith("/"))
-                {
-                    _apiUrl = value + "/";
-                    return;
-                }
+            var inResponse = await _httpClient.PostAsync(RES_API_URL, new FormUrlEncodedContent(getData));
+            var inJson = await inResponse.Content.ReadAsStringAsync();
 
-                _apiUrl = value;
-            }
+            var @in = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(inJson);
+
+            return new _2CaptchaResult(@in.Status, @in.Request, solveId);
         }
-         
 
         public async Task<_2CaptchaResult> GetBalance()
         {
-            var getData = new List<KeyValuePair<string, string>>
+            var getData = new Dictionary<string, string>
             {
-                new KeyValuePair<string, string>("key", _apiKey),
-                new KeyValuePair<string, string>("action", "getbalance"),
-                new KeyValuePair<string, string>("json", "1")
+                { "key", _apiKey },
+                { "action", "getbalance" },
+                { "json", "1" }
             };
 
-            var inResponse = await _httpClient.PostAsync(_apiUrl + "res.php", new FormUrlEncodedContent(getData));
+            var inResponse = await _httpClient.PostAsync(RES_API_URL, new FormUrlEncodedContent(getData));
             var inJson = await inResponse.Content.ReadAsStringAsync();
 
             var @in = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(inJson);
-            if (@in.Status == 0)
-            {
-                return new _2CaptchaResult(false, @in.Request);
-            }
 
-            return new _2CaptchaResult(true, @in.Request);
+            return new _2CaptchaResult(@in.Status, @in.Request, null);
         }
         
-        private async Task<_2CaptchaResult> Solve(string method, int delaySeconds, MultipartFormDataContent httpContent)
-        {
-            httpContent.Add(new StringContent(_apiKey), "key");
-            httpContent.Add(new StringContent(method), "method");
-            httpContent.Add(new StringContent("1"), "json");
-
-            var inResponse = await _httpClient.PostAsync(_apiUrl + "in.php", httpContent);
-            var inJson = await inResponse.Content.ReadAsStringAsync();
-
-            var @in = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(inJson);
-            if (@in.Status == 0)
-            {
-                return new _2CaptchaResult(false, @in.Request);
-            }
-            
-            await Task.Delay(delaySeconds * 1000);
-            return await GetResponse(@in.Request);
-        }
+        
 
         private async Task<_2CaptchaResult> Solve(string method, int delaySeconds, params KeyValuePair<string, string>[] args)
         {
-            var postData = new List<KeyValuePair<string, string>>
+            IDictionary<string, string> postData = new Dictionary<string, string>
             {
-                new KeyValuePair<string, string>("key", _apiKey),
-                new KeyValuePair<string, string>("method", method),
-                new KeyValuePair<string, string>("json", "1")
+                { "key", _apiKey },
+                { "method", method },
+                { "json", "1" }
             };
+            
+            foreach (var arg in args)
+            {
+                postData.Add(arg);
+            }
 
-            postData.AddRange(args);
-
-            var inResponse = await _httpClient.PostAsync(_apiUrl + "in.php", new FormUrlEncodedContent(postData));
+            var inResponse = await _httpClient.PostAsync(IN_API_URL, new FormUrlEncodedContent(postData));
             var inJson = await inResponse.Content.ReadAsStringAsync();
 
             var @in = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(inJson);
-            if (@in.Status == 0)
+            if (!@in.Status)
             {
-                return new _2CaptchaResult(false, @in.Request);
+                return new _2CaptchaResult(false, @in.Request, null);
             }
             
             await Task.Delay(delaySeconds * 1000);
@@ -123,10 +104,10 @@ namespace _2Captcha
 
             while (true)
             {
-                var resJson = await _httpClient.GetStringAsync(_apiUrl + $"res.php?key={apiKeySafe}&id={solveId}&action=get&json=1");
+                var resJson = await _httpClient.GetStringAsync(RES_API_URL + $"?key={apiKeySafe}&id={solveId}&action=get&json=1");
 
                 var res = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(resJson);
-                if (res.Status == 0)
+                if (!res.Status)
                 {
                     if (res.Request == "CAPCHA_NOT_READY")
                     {
@@ -135,29 +116,19 @@ namespace _2Captcha
                     }
                     else
                     {
-                        return new _2CaptchaResult(false, res.Request);
+                        return new _2CaptchaResult(false, res.Request, solveId);
                     }
                 }
 
-                return new _2CaptchaResult(true, res.Request);
+                return new _2CaptchaResult(true, res.Request, solveId);
             }
         }
 
         
-        public async Task<_2CaptchaResult> SolveImage(Stream imageStream)
-        {
-            var httpContent = new MultipartFormDataContent
-            {
-                { new StreamContent(imageStream), "file" }
-            };
-
-            return await Solve("post", 5, httpContent);
-        }
 
         public async Task<_2CaptchaResult> SolveImage(string imageBase64)
         {
-            return await Solve("base64", 5,
-                new KeyValuePair<string, string>("body", imageBase64));
+            return await Solve("base64", 5, new KeyValuePair<string, string>("body", imageBase64));
         }
 
         public async Task<_2CaptchaResult> SolveQuestion(string question)
@@ -190,18 +161,7 @@ namespace _2Captcha
                 new KeyValuePair<string, string>("version", "v3"),
                 new KeyValuePair<string, string>("min_score", minScore.ToString(CultureInfo.InvariantCulture)));
         }
-
-        public async Task<_2CaptchaResult> SolveClickCaptcha(Stream imageStream, string task)
-        {
-            var httpContent = new MultipartFormDataContent
-            {
-                { new StringContent("1"), "coordinatescaptcha" },
-                { new StreamContent(imageStream), "file" },
-                { new StringContent(task), "textinstructions" }
-            };
-
-            return await Solve("post", 5, httpContent);
-        }
+        
 
         public async Task<_2CaptchaResult> SolveClickCaptcha(string imageBase64, string task)
         {
@@ -211,20 +171,7 @@ namespace _2Captcha
                 new KeyValuePair<string, string>("textinstructions", task));
         }
 
-        public async Task<_2CaptchaResult> SolveRotateCaptcha(Stream[] imageStreams, string rotateAngle)
-        {
-            var httpContent = new MultipartFormDataContent
-            {
-                { new StringContent(rotateAngle), "angle" }
-            };
-
-            for (var i = 0; i < imageStreams.Length; i++)
-            {
-                httpContent.Add(new StreamContent(imageStreams[i]), "file_" + (i + 1));
-            }
-
-            return await Solve("rotatecaptcha", 5, httpContent);
-        }
+        
 
         public async Task<_2CaptchaResult> SolveFunCaptcha(string funCaptchaPublicKey, string pageUrl, bool noJavaScript = false)
         {
@@ -243,5 +190,60 @@ namespace _2Captcha
                 new KeyValuePair<string, string>("s_s_c_web_server_sign2", webServerSign2),
                 new KeyValuePair<string, string>("pageurl", pageUrl));
         }
+
+        #region MultipartForm
+        private async Task<_2CaptchaResult> Solve(string method, int delaySeconds, MultipartFormDataContent httpContent)
+        {
+            httpContent.Add(new StringContent(_apiKey), "key");
+            httpContent.Add(new StringContent(method), "method");
+            httpContent.Add(new StringContent("1"), "json");
+
+            var inResponse = await _httpClient.PostAsync(IN_API_URL, httpContent);
+            var inJson = await inResponse.Content.ReadAsStringAsync();
+
+            var @in = JsonConvert.DeserializeObject<_2CaptchaResultInternal>(inJson);
+            if (!@in.Status)
+            {
+                return new _2CaptchaResult(false, @in.Request, null);
+            }
+
+            await Task.Delay(delaySeconds * 1000);
+            return await GetResponse(@in.Request);
+        }
+        public async Task<_2CaptchaResult> SolveImage(Stream imageStream)
+        {
+            var httpContent = new MultipartFormDataContent
+            {
+                { new StreamContent(imageStream), "file" }
+            };
+
+            return await Solve("post", 5, httpContent);
+        }
+        public async Task<_2CaptchaResult> SolveClickCaptcha(Stream imageStream, string task)
+        {
+            var httpContent = new MultipartFormDataContent
+            {
+                { new StringContent("1"), "coordinatescaptcha" },
+                { new StreamContent(imageStream), "file" },
+                { new StringContent(task), "textinstructions" }
+            };
+
+            return await Solve("post", 5, httpContent);
+        }
+        public async Task<_2CaptchaResult> SolveRotateCaptcha(Stream[] imageStreams, string rotateAngle)
+        {
+            var httpContent = new MultipartFormDataContent
+            {
+                { new StringContent(rotateAngle), "angle" }
+            };
+
+            for (var i = 0; i < imageStreams.Length; i++)
+            {
+                httpContent.Add(new StreamContent(imageStreams[i]), "file_" + (i + 1));
+            }
+
+            return await Solve("rotatecaptcha", 5, httpContent);
+        }
+        #endregion
     }
 }
